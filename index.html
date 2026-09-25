@@ -3033,6 +3033,7 @@
       src:url
     };
     cutout.img = new Image();
+    cutout.img.decoding = 'sync';
     cutout.img.onload = ()=>{ renderCutoutLayer(); };
     cutout.img.src = url;
     cutoutItems.push(cutout);
@@ -3047,7 +3048,7 @@
     a.click();
     a.remove();
     log('なげなわ切り抜きを保存し、画面に重ねて配置しました');
-    showCameraStatus('なげなわ切り抜きを配置しました', 'ok', 1800);
+    showCameraStatus('切り抜きを画面に配置しました', 'ok', 1800);
     return true;
   }
 
@@ -3132,6 +3133,29 @@
       ctx.save();
       ctx.translate(Number(s.x)||0, Number(s.y)||0);
       drawShapeLocal(ctx, s, Math.max(24, Number(s.w)||24), Math.max(24, Number(s.h)||24));
+      ctx.restore();
+    }
+  }
+
+  function drawCutoutItemsOnComposite(ctx){
+    for(const c of cutoutItems){
+      if(!c) continue;
+      let img = c.img;
+      if(!img && c.src){
+        img = new Image();
+        img.src = c.src;
+        c.img = img;
+      }
+      if(!img || !img.complete || !img.naturalWidth || !img.naturalHeight) continue;
+      ctx.save();
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.drawImage(
+        img,
+        Number(c.x)||0,
+        Number(c.y)||0,
+        Math.max(1, Number(c.w)||1),
+        Math.max(1, Number(c.h)||1)
+      );
       ctx.restore();
     }
   }
