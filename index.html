@@ -87,6 +87,7 @@
     #shape-layer{ position:absolute; inset:0; z-index:4; pointer-events:none; }
     #text-layer{ z-index:5; }
     #focus-layer{ position:absolute; inset:0; z-index:6; pointer-events:none; touch-action:none; }
+    #lasso-layer{ position:absolute; inset:0; z-index:7; pointer-events:none; touch-action:none; }
     #draw-layer{ touch-action:none;}
     #ui-layer{ pointer-events:none;}
 
@@ -287,7 +288,7 @@
       color:#aaa; font-size:10px; line-height:1.35;
     }
 
-    #zoom-hint,#focus-hint{
+    #zoom-hint,#focus-hint,#lasso-hint{
       position:fixed; top:50%; left:50%;
       transform:translate(-50%,-50%);
       background:rgba(0,0,0,0.74);
@@ -301,7 +302,7 @@
       pointer-events:none;
       box-shadow:0 4px 18px rgba(0,0,0,.28);
     }
-    #zoom-hint.visible,#focus-hint.visible{ display:block;}
+    #zoom-hint.visible,#focus-hint.visible,#lasso-hint.visible{ display:block;}
 
     /* ボタン説明：ブラウザ標準titleの待ち時間を使わず、即時表示 */
     #quick-tooltip{
@@ -379,6 +380,7 @@
       <div id="text-layer"></div>
     </div>
     <canvas id="focus-layer"></canvas>
+    <canvas id="lasso-layer"></canvas>
     <div id="text-editor"><textarea id="text-editor-ta"></textarea></div>
     <div id="camera-status" role="status" aria-live="polite"></div>
   </div>
@@ -390,6 +392,7 @@
     <div class="tool-group-sep"></div>
 
     <button id="btn-shot" class="tool-btn" title="写真撮影（PNG）" aria-label="写真撮影" disabled><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 8h3l1.3-2h5.4L16 8h3a2 2 0 0 1 2 2v8H3v-8a2 2 0 0 1 2-2z"/><circle cx="12" cy="13" r="3.3"/></svg></button>
+    <button id="btn-lasso" class="tool-btn" title="なげなわ切り抜き（透明PNG）" aria-label="なげなわ切り抜き"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 6.5c2.7-2.1 7.2-1.7 9.2.8 2.2 2.8 1 6.8-2.2 8.3-3.4 1.6-8.2.3-9.5-3.1-.8-2.1.2-4.4 2.5-6z"/><path d="M14.5 15.6c.2 2.6 1.4 4.2 3.7 4.8M18.2 20.4l1.9-1.1"/></svg></button>
 
     <div class="tool-group-sep"></div>
 
@@ -538,8 +541,9 @@
       <div><b>3. 図形・吹き出し</b><br>図形ボタンを押し、画面をドラッグして作成します。種類、輪郭、塗り、透明度、パターンを変更できます。選択後は移動・サイズ変更ができ、吹き出しは黄色いハンドルで先端位置を動かせます。</div>
       <div><b>4. テキスト</b><br>Tボタンを押して画面をクリックすると文字を追加できます。選択後に移動・サイズ・色・フォントを変更できます。</div>
       <div><b>5. 写真・動画・TL</b><br>下部から静止画、動画、タイムラプスを保存できます。録画中の描画・図形・テキスト・ズームも反映されます。</div>
-      <div><b>6. ズーム・ここ見て！</b><br>虫眼鏡で範囲ズーム、「ここ見て！」で円形領域を指定すると漫画の集中線が表示されます。</div>
-      <div><b>7. 映像設定</b><br>右下の調整ボタンから明るさ、コントラスト、反転、カメラ選択、録画設定などを変更できます。</div>
+      <div><b>6. なげなわ切り抜き</b><br>なげなわボタンを押し、切り出したい範囲を自由に一周トレースします。指やマウスを離すと、選択範囲だけが透明背景のPNGとして保存されます。</div>
+      <div><b>7. ズーム・ここ見て！</b><br>虫眼鏡で範囲ズーム、「ここ見て！」で円形領域を指定すると漫画の集中線が表示されます。</div>
+      <div><b>8. 映像設定</b><br>右下の調整ボタンから明るさ、コントラスト、反転、カメラ選択、録画設定などを変更できます。</div>
       <div style="margin-top:6px;color:#bbb;">URL: https://scd-ku.github.io/camera</div>
     </div>
     <div id="log" style="display:none" aria-hidden="true"></div>
@@ -548,6 +552,7 @@
 
   <div id="zoom-hint">ズームしたい範囲を四角くドラッグ</div>
   <div id="focus-hint">ここ見て！ 円の中心から外へドラッグして範囲を指定</div>
+  <div id="lasso-hint">切り出したい範囲を一周なぞってください</div>
   <div id="quick-tooltip" role="tooltip"></div>
 
   <div id="qr-overlay">
@@ -565,9 +570,11 @@
   const drawCanvas = document.getElementById('draw-layer');
   const uiCanvas = document.getElementById('ui-layer');
   const focusCanvas = document.getElementById('focus-layer');
+  const lassoCanvas = document.getElementById('lasso-layer');
   const drawCtx = drawCanvas.getContext('2d');
   const uiCtx = uiCanvas.getContext('2d');
   const focusCtx = focusCanvas.getContext('2d');
+  const lassoCtx = lassoCanvas.getContext('2d');
 
   const cameraWrapper = document.getElementById('camera-wrapper');
   const cameraInner = document.getElementById('camera-inner');
@@ -583,6 +590,7 @@
   const btnClear = document.getElementById('btn-clear');
   const btnUndo = document.getElementById('btn-undo');
   const btnShot = document.getElementById('btn-shot');
+  const btnLasso = document.getElementById('btn-lasso');
   const btnZoomSelect = document.getElementById('btn-zoom-select');
   const btnZoomReset = document.getElementById('btn-zoom-reset');
   const btnFocusLines = document.getElementById('btn-focus-lines');
@@ -641,6 +649,7 @@
   const logToggle = document.getElementById('log-toggle');
   const zoomHint = document.getElementById('zoom-hint');
   const focusHint = document.getElementById('focus-hint');
+  const lassoHint = document.getElementById('lasso-hint');
   const quickTooltip = document.getElementById('quick-tooltip');
   const cameraStatus = document.getElementById('camera-status');
   let cameraStatusTimer = null;
@@ -990,6 +999,13 @@
   let focusRenderProgress = 1;
   let focusOpacity = 1;
   let focusRetract = 0;
+
+  // なげなわ切り抜き（画面座標ベース）
+  let lassoMode = false;
+  let lassoDrawing = false;
+  let lassoPoints = [];
+  let lassoPointerId = null;
+
   function cloneFocusEffect(e){
     if(!e) return null;
     return { ...e, lines: (e.lines||[]).map(l=>({...l})) };
@@ -1064,7 +1080,7 @@
     const height = rect.height;
     const dpr = window.devicePixelRatio || 1;
 
-    [drawCanvas, uiCanvas, focusCanvas].forEach(c=>{
+    [drawCanvas, uiCanvas, focusCanvas, lassoCanvas].forEach(c=>{
       c.width = width*dpr;
       c.height = height*dpr;
       c.style.width = width+'px';
@@ -1078,6 +1094,7 @@
     drawCtx.clearRect(0,0,drawCanvas.width,drawCanvas.height);
     uiCtx.clearRect(0,0,uiCanvas.width,uiCanvas.height);
     focusCtx.clearRect(0,0,focusCanvas.width,focusCanvas.height);
+    lassoCtx.clearRect(0,0,lassoCanvas.width,lassoCanvas.height);
 
     zoomRect = null;
     focusEffect = null;
@@ -1215,7 +1232,7 @@
   }
 
   function updateOverlayPointerModes(){
-    if(zoomMode || focusMode){
+    if(zoomMode || focusMode || lassoMode){
       drawCanvas.style.pointerEvents='none';
       textLayer.style.pointerEvents='none';
       shapeLayer.style.pointerEvents='none';
@@ -1229,6 +1246,7 @@
   function setToolMode(mode){
     if(focusMode) exitFocusMode(true);
     if(zoomMode) exitZoomMode();
+    if(lassoMode) exitLassoMode();
     toolMode = mode;
     toolEraserBtn.classList.toggle('active', mode==='eraser');
     toolShapeBtn.classList.toggle('active', mode==='shape');
@@ -2417,6 +2435,7 @@
     focusRenderProgress = 1;
     cancelFocusAnimation();
     focusCtx.clearRect(0,0,focusCanvas.width,focusCanvas.height);
+    clearLassoCanvas();
     log('描画・図形・集中線をクリアしました（テキストは残ります）');
   });
 
@@ -2447,6 +2466,7 @@
 
   function enterZoomMode(){
     if(focusMode) exitFocusMode();
+    if(lassoMode) exitLassoMode();
     zoomMode = true;
     btnZoomSelect.classList.add('active');
     zoomDragStart=null; lastZoomPos=null;
@@ -2690,6 +2710,7 @@
 
   function enterFocusMode(){
     if(zoomMode) exitZoomMode();
+    if(lassoMode) exitLassoMode();
     focusMode=true;
     focusDragStart=null; lastFocusPos=null;
     cancelFocusAnimation();
@@ -2766,6 +2787,202 @@
 
   cameraWrapper.addEventListener('pointercancel',()=>{
     if(focusMode) exitFocusMode(true);
+  },{capture:true});
+
+  // ===== なげなわ切り抜き =====
+  function clearLassoCanvas(){
+    lassoCtx.setTransform(1,0,0,1,0,0);
+    lassoCtx.clearRect(0,0,lassoCanvas.width,lassoCanvas.height);
+  }
+
+  function drawLassoPreview(closePath=false){
+    clearLassoCanvas();
+    if(lassoPoints.length < 2) return;
+    const rect=cameraWrapper.getBoundingClientRect();
+    const sx=lassoCanvas.width/Math.max(1,rect.width);
+    const sy=lassoCanvas.height/Math.max(1,rect.height);
+    lassoCtx.save();
+    lassoCtx.strokeStyle='#ffffff';
+    lassoCtx.lineWidth=2*Math.max(sx,sy);
+    lassoCtx.setLineDash([7*Math.max(sx,sy),5*Math.max(sx,sy)]);
+    lassoCtx.lineJoin='round';
+    lassoCtx.lineCap='round';
+    lassoCtx.beginPath();
+    lassoCtx.moveTo(lassoPoints[0].x*sx,lassoPoints[0].y*sy);
+    for(let i=1;i<lassoPoints.length;i++){
+      lassoCtx.lineTo(lassoPoints[i].x*sx,lassoPoints[i].y*sy);
+    }
+    if(closePath) lassoCtx.closePath();
+    lassoCtx.stroke();
+    lassoCtx.restore();
+  }
+
+  function enterLassoMode(){
+    if(zoomMode) exitZoomMode();
+    if(focusMode) exitFocusMode(true);
+    lassoMode=true;
+    lassoDrawing=false;
+    lassoPoints=[];
+    lassoPointerId=null;
+    clearLassoCanvas();
+    btnLasso.classList.add('active');
+    lassoHint.classList.add('visible');
+    updateOverlayPointerModes();
+    hideTextEditor();
+    log('なげなわ：切り出したい範囲を一周なぞってください');
+  }
+
+  function exitLassoMode(){
+    lassoMode=false;
+    lassoDrawing=false;
+    lassoPoints=[];
+    lassoPointerId=null;
+    clearLassoCanvas();
+    btnLasso.classList.remove('active');
+    lassoHint.classList.remove('visible');
+    updateOverlayPointerModes();
+  }
+
+  function polygonArea(points){
+    if(points.length<3) return 0;
+    let sum=0;
+    for(let i=0;i<points.length;i++){
+      const a=points[i], b=points[(i+1)%points.length];
+      sum += a.x*b.y - b.x*a.y;
+    }
+    return Math.abs(sum)/2;
+  }
+
+  function downloadLassoCutout(points){
+    if(!points || points.length<3) return false;
+    if(!drawCompositeFrame()){
+      log('切り抜き用の映像フレームを取得できませんでした');
+      showCameraStatus('映像を取得できませんでした', 'error', 2200);
+      return false;
+    }
+
+    const rect=cameraWrapper.getBoundingClientRect();
+    const W=Math.max(1,rect.width), H=Math.max(1,rect.height);
+    const dprX=compositeCanvas.width/W;
+    const dprY=compositeCanvas.height/H;
+    const marginCss=2;
+    let minX=Math.min(...points.map(p=>p.x));
+    let minY=Math.min(...points.map(p=>p.y));
+    let maxX=Math.max(...points.map(p=>p.x));
+    let maxY=Math.max(...points.map(p=>p.y));
+    minX=clamp(minX-marginCss,0,W); minY=clamp(minY-marginCss,0,H);
+    maxX=clamp(maxX+marginCss,0,W); maxY=clamp(maxY+marginCss,0,H);
+    const cropW=Math.max(1,maxX-minX), cropH=Math.max(1,maxY-minY);
+
+    const out=document.createElement('canvas');
+    out.width=Math.max(1,Math.ceil(cropW*dprX));
+    out.height=Math.max(1,Math.ceil(cropH*dprY));
+    const octx=out.getContext('2d');
+    octx.clearRect(0,0,out.width,out.height);
+
+    // まず表示中の合成画像をそのまま切り出す
+    octx.drawImage(
+      compositeCanvas,
+      Math.floor(minX*dprX), Math.floor(minY*dprY),
+      Math.ceil(cropW*dprX), Math.ceil(cropH*dprY),
+      0,0,out.width,out.height
+    );
+
+    // なげなわ外側を透明化
+    octx.save();
+    octx.globalCompositeOperation='destination-in';
+    octx.beginPath();
+    octx.moveTo((points[0].x-minX)*dprX,(points[0].y-minY)*dprY);
+    for(let i=1;i<points.length;i++){
+      octx.lineTo((points[i].x-minX)*dprX,(points[i].y-minY)*dprY);
+    }
+    octx.closePath();
+    octx.fillStyle='#000';
+    octx.fill();
+    octx.restore();
+
+    const url=out.toDataURL('image/png');
+    const a=document.createElement('a');
+    const ts=new Date().toISOString().replace(/[:.]/g,'-');
+    a.href=url;
+    a.download=`lasso_${ts}.png`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    log('なげなわ選択範囲を透明PNGとして保存しました');
+    showCameraStatus('なげなわ切り抜きを保存しました', 'ok', 1800);
+    return true;
+  }
+
+  btnLasso.addEventListener('click', ()=>{
+    if(!video.videoWidth){
+      log('カメラ起動後になげなわ切り抜きを使えます');
+      showCameraStatus('カメラを開始してください', 'error', 1800);
+      return;
+    }
+    if(lassoMode) exitLassoMode();
+    else enterLassoMode();
+  });
+
+  cameraWrapper.addEventListener('pointerdown',(e)=>{
+    if(!lassoMode) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const p=getWrapperPosFromClient(e.clientX,e.clientY);
+    lassoDrawing=true;
+    lassoPointerId=e.pointerId;
+    lassoPoints=[p];
+    try{ cameraWrapper.setPointerCapture && cameraWrapper.setPointerCapture(e.pointerId); }catch(_e){}
+    drawLassoPreview(false);
+  },{capture:true});
+
+  cameraWrapper.addEventListener('pointermove',(e)=>{
+    if(!lassoMode || !lassoDrawing || e.pointerId!==lassoPointerId) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const p=getWrapperPosFromClient(e.clientX,e.clientY);
+    const last=lassoPoints[lassoPoints.length-1];
+    if(!last || Math.hypot(p.x-last.x,p.y-last.y)>=2.5){
+      lassoPoints.push(p);
+      drawLassoPreview(false);
+    }
+  },{capture:true});
+
+  function finalizeLasso(e){
+    if(!lassoMode || !lassoDrawing) return;
+    if(e.pointerId!==undefined && lassoPointerId!==null && e.pointerId!==lassoPointerId) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const p=(Number.isFinite(e.clientX)&&Number.isFinite(e.clientY)) ? getWrapperPosFromClient(e.clientX,e.clientY) : null;
+    if(p){
+      const last=lassoPoints[lassoPoints.length-1];
+      if(!last || Math.hypot(p.x-last.x,p.y-last.y)>=1.5) lassoPoints.push(p);
+    }
+    lassoDrawing=false;
+    drawLassoPreview(true);
+    const pts=lassoPoints.slice();
+    try{ cameraWrapper.releasePointerCapture && lassoPointerId!==null && cameraWrapper.releasePointerCapture(lassoPointerId); }catch(_e){}
+    lassoPointerId=null;
+
+    if(pts.length<8 || polygonArea(pts)<200){
+      log('なげなわ範囲が小さすぎます');
+      showCameraStatus('選択範囲が小さすぎます', 'error', 1600);
+      exitLassoMode();
+      return;
+    }
+
+    // 白い点線を一瞬確認できるよう描いた後、同じユーザー操作内で保存
+    downloadLassoCutout(pts);
+    exitLassoMode();
+  }
+
+  cameraWrapper.addEventListener('pointerup',finalizeLasso,{capture:true});
+  cameraWrapper.addEventListener('pointercancel',(e)=>{
+    if(!lassoMode) return;
+    if(lassoDrawing && lassoPoints.length>=8 && polygonArea(lassoPoints)>=200){
+      downloadLassoCutout(lassoPoints.slice());
+    }
+    exitLassoMode();
   },{capture:true});
 
   // ===== 静止画/録画共通の合成描画 =====
