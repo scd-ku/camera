@@ -85,9 +85,10 @@
     #draw-layer{ z-index:2; }
     #ui-layer{ z-index:3; }
     #shape-layer{ position:absolute; inset:0; z-index:4; pointer-events:none; }
-    #text-layer{ z-index:5; }
-    #focus-layer{ position:absolute; inset:0; z-index:6; pointer-events:none; touch-action:none; }
-    #lasso-layer{ position:absolute; inset:0; z-index:7; pointer-events:none; touch-action:none; }
+    #cutout-layer{ position:absolute; inset:0; z-index:5; pointer-events:none; }
+    #text-layer{ z-index:6; }
+    #focus-layer{ position:absolute; inset:0; z-index:7; pointer-events:none; touch-action:none; }
+    #lasso-layer{ position:absolute; inset:0; z-index:8; pointer-events:none; touch-action:none; }
     #draw-layer{ touch-action:none;}
     #ui-layer{ pointer-events:none;}
 
@@ -131,6 +132,32 @@
     }
     .shape-tail-handle:active{ cursor:grabbing; }
     .shape-box.selected .shape-tail-handle{ display:block; }
+
+
+    #cutout-layer{ position:absolute; inset:0; pointer-events:none; }
+    .cutout-box{
+      position:absolute; min-width:16px; min-height:16px;
+      pointer-events:auto; user-select:none; touch-action:none;
+      cursor:grab;
+    }
+    .cutout-box:active{ cursor:grabbing; }
+    .cutout-box.selected{
+      outline:2px dashed rgba(255,255,255,0.95);
+      outline-offset:2px;
+    }
+    .cutout-image{
+      width:100%; height:100%; display:block; pointer-events:none;
+      filter:drop-shadow(0 2px 6px rgba(0,0,0,0.35));
+    }
+    .cutout-delete-handle{
+      position:absolute; right:-10px; top:-10px; width:20px; height:20px;
+      border-radius:50%; background:rgba(220,38,38,0.98); color:#fff;
+      border:2px solid rgba(255,255,255,0.95); display:none;
+      align-items:center; justify-content:center; font-size:14px; font-weight:700;
+      box-shadow:0 1px 4px rgba(0,0,0,0.35); cursor:pointer; pointer-events:auto;
+      line-height:1;
+    }
+    .cutout-box.selected .cutout-delete-handle{ display:flex; }
 
     /* テキストDOM（ズーム追従のため cameraInner内） */
     #text-layer{
@@ -377,6 +404,7 @@
       <canvas id="draw-layer"></canvas>
       <canvas id="ui-layer"></canvas>
       <div id="shape-layer"></div>
+      <div id="cutout-layer"></div>
       <div id="text-layer"></div>
     </div>
     <canvas id="focus-layer"></canvas>
@@ -541,7 +569,7 @@
       <div><b>3. 図形・吹き出し</b><br>図形ボタンを押し、画面をドラッグして作成します。種類、輪郭、塗り、透明度、パターンを変更できます。選択後は移動・サイズ変更ができ、吹き出しは黄色いハンドルで先端位置を動かせます。</div>
       <div><b>4. テキスト</b><br>Tボタンを押して画面をクリックすると文字を追加できます。選択後に移動・サイズ・色・フォントを変更できます。</div>
       <div><b>5. 写真・動画・TL</b><br>下部から静止画、動画、タイムラプスを保存できます。録画中の描画・図形・テキスト・ズームも反映されます。</div>
-      <div><b>6. なげなわ切り抜き</b><br>なげなわボタンを押し、切り出したい範囲を自由に一周トレースします。指やマウスを離すと、選択範囲だけが透明背景のPNGとして保存されます。</div>
+      <div><b>6. なげなわ切り抜き</b><br>なげなわボタンを押し、切り出したい範囲を自由に一周トレースします。指やマウスを離すと、選択範囲だけが透明背景で切り抜かれ、映像上に重ねて表示されます。ドラッグで移動、×ボタンで個別に削除できます。</div>
       <div><b>7. ズーム・ここ見て！</b><br>虫眼鏡で範囲ズーム、「ここ見て！」で円形領域を指定すると漫画の集中線が表示されます。</div>
       <div><b>8. 映像設定</b><br>右下の調整ボタンから明るさ、コントラスト、反転、カメラ選択、録画設定などを変更できます。</div>
       <div style="margin-top:6px;color:#bbb;">URL: https://scd-ku.github.io/camera</div>
@@ -580,6 +608,7 @@
   const cameraInner = document.getElementById('camera-inner');
 
   const shapeLayer = document.getElementById('shape-layer');
+  const cutoutLayer = document.getElementById('cutout-layer');
   const textLayer = document.getElementById('text-layer');
   const textEditor = document.getElementById('text-editor');
   const textEditorTa = document.getElementById('text-editor-ta');
@@ -1232,6 +1261,7 @@
   }
 
   function updateOverlayPointerModes(){
+    cutoutLayer.style.pointerEvents='none';
     if(zoomMode || focusMode || lassoMode){
       drawCanvas.style.pointerEvents='none';
       textLayer.style.pointerEvents='none';
@@ -1708,13 +1738,107 @@
     const hitText = path.some(p=> p && p.classList && p.classList.contains('text-box'));
     const hitEditor = path.some(p=> p && p.id==='text-editor-ta');
     const hitShape = path.some(p=> p && p.classList && p.classList.contains('shape-box'));
+    const hitCutout = path.some(p=> p && p.classList && p.classList.contains('cutout-box'));
     if(!hitText && !hitEditor){
       if(toolMode!=='text') deselectText();
     }
     if(!hitShape){
       deselectShape();
     }
+    if(!hitCutout){
+      deselectCutout();
+    }
   }, {capture:true});
+
+  // ===== なげなわ切り抜きオブジェクト =====
+  let cutoutItems = [];
+  let selectedCutoutId = null;
+  let activeCutoutPointerId = null;
+  let isDraggingCutout = false;
+  let cutoutDragOffset = {x:0,y:0};
+
+  function getSelectedCutout(){ return cutoutItems.find(c=>c.id===selectedCutoutId) || null; }
+  function deselectCutout(){
+    if(selectedCutoutId===null) return;
+    selectedCutoutId = null;
+    renderCutoutLayer();
+  }
+  function updateCutoutSelectionVisual(){
+    const boxes=cutoutLayer.querySelectorAll('.cutout-box');
+    boxes.forEach(b=> b.classList.toggle('selected', b.dataset.id===selectedCutoutId));
+  }
+  function deleteCutout(id){
+    cutoutItems = cutoutItems.filter(c=>c.id!==id);
+    if(selectedCutoutId===id) selectedCutoutId=null;
+    renderCutoutLayer();
+    log('切り抜き画像を削除しました');
+  }
+  function renderCutoutLayer(){
+    cutoutLayer.innerHTML='';
+    for(const item of cutoutItems){
+      const box=document.createElement('div');
+      box.className='cutout-box';
+      box.dataset.id=item.id;
+      box.style.left=(Number(item.x)||0)+'px';
+      box.style.top=(Number(item.y)||0)+'px';
+      box.style.width=Math.max(1, Number(item.w)||1)+'px';
+      box.style.height=Math.max(1, Number(item.h)||1)+'px';
+
+      const img=document.createElement('img');
+      img.className='cutout-image';
+      img.alt='';
+      img.draggable=false;
+      img.src=item.src;
+      box.appendChild(img);
+
+      const del=document.createElement('button');
+      del.type='button';
+      del.className='cutout-delete-handle';
+      del.title='切り抜き画像を削除';
+      del.setAttribute('aria-label','切り抜き画像を削除');
+      del.textContent='×';
+      box.appendChild(del);
+
+      del.addEventListener('click', (e)=>{
+        e.preventDefault(); e.stopPropagation();
+        deleteCutout(item.id);
+      });
+
+      box.addEventListener('pointerdown', (e)=>{
+        if(zoomMode || focusMode || lassoMode) return;
+        if(e.target===del) return;
+        e.preventDefault(); e.stopPropagation();
+        selectedCutoutId=item.id;
+        updateCutoutSelectionVisual();
+        activeCutoutPointerId=e.pointerId;
+        isDraggingCutout=true;
+        const p=clientToInnerCss(e.clientX, e.clientY);
+        cutoutDragOffset.x = p.x - (Number(item.x)||0);
+        cutoutDragOffset.y = p.y - (Number(item.y)||0);
+        try{ if(box.setPointerCapture) box.setPointerCapture(e.pointerId); }catch(_e){}
+      });
+      box.addEventListener('pointermove', (e)=>{
+        if(!isDraggingCutout || activeCutoutPointerId!==e.pointerId) return;
+        const c = cutoutItems.find(x=>x.id===box.dataset.id);
+        if(!c) return;
+        e.preventDefault(); e.stopPropagation();
+        const p=clientToInnerCss(e.clientX, e.clientY);
+        c.x = p.x - cutoutDragOffset.x;
+        c.y = p.y - cutoutDragOffset.y;
+        box.style.left=c.x+'px';
+        box.style.top=c.y+'px';
+      });
+      function endCutoutDrag(e){
+        if(activeCutoutPointerId!==null && e.pointerId!==activeCutoutPointerId) return;
+        isDraggingCutout=false; activeCutoutPointerId=null;
+      }
+      box.addEventListener('pointerup', endCutoutDrag);
+      box.addEventListener('pointercancel', endCutoutDrag);
+
+      cutoutLayer.appendChild(box);
+    }
+    updateCutoutSelectionVisual();
+  }
 
   // ===== 図形 =====
   let isDraggingShape = false;
@@ -2902,6 +3026,19 @@
     octx.restore();
 
     const url=out.toDataURL('image/png');
+
+    const cutout={
+      id:newId(),
+      x:minX, y:minY, w:cropW, h:cropH,
+      src:url
+    };
+    cutout.img = new Image();
+    cutout.img.onload = ()=>{ renderCutoutLayer(); };
+    cutout.img.src = url;
+    cutoutItems.push(cutout);
+    selectedCutoutId = cutout.id;
+    renderCutoutLayer();
+
     const a=document.createElement('a');
     const ts=new Date().toISOString().replace(/[:.]/g,'-');
     a.href=url;
@@ -2909,8 +3046,8 @@
     document.body.appendChild(a);
     a.click();
     a.remove();
-    log('なげなわ選択範囲を透明PNGとして保存しました');
-    showCameraStatus('なげなわ切り抜きを保存しました', 'ok', 1800);
+    log('なげなわ切り抜きを保存し、画面に重ねて配置しました');
+    showCameraStatus('なげなわ切り抜きを配置しました', 'ok', 1800);
     return true;
   }
 
@@ -3060,9 +3197,10 @@
     ctx.drawImage(video,0,0,vw,vh);
     ctx.restore();
 
-    // draw drawing layer, shapes and texts (camera-inner座標＝ズーム追従)
+    // draw drawing layer, shapes, lasso cutouts and texts (camera-inner座標＝ズーム追従)
     ctx.drawImage(drawCanvas, 0,0,drawCanvas.width,drawCanvas.height, 0,0, Wcss,Hcss);
     drawShapeItemsOnComposite(ctx);
+    drawCutoutItemsOnComposite(ctx);
     drawTextItemsOnComposite(ctx);
 
     // 集中線は画面座標で重ねる（ズーム後の注目位置をそのまま指せる）
